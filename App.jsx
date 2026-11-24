@@ -197,28 +197,54 @@ const getAstronomicalSolsticeDate = (year, isWinter) => {
   return new Date(year, d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0);
 };
 
-const LUNAR_NEW_YEAR_DATES = {
-  2024: [1, 10], 2025: [0, 29], 2026: [1, 17], 2027: [1, 6],
-  2028: [0, 26], 2029: [1, 13], 2030: [1, 3], 2031: [0, 23],
-  2032: [1, 11], 2033: [0, 31], 2034: [1, 19], 2035: [1, 8],
-  2036: [0, 28], 2037: [1, 15], 2038: [1, 4], 2039: [0, 24], 2040: [1, 12]
+// 1. Infinite Lunar New Year via Browser ICU Astronomical Chinese Calendar
+const getInfiniteLunarNewYear = (year) => {
+  try {
+    const fmt = new Intl.DateTimeFormat('en-US-u-ca-chinese', { month: 'numeric', day: 'numeric' });
+    for (let offset = 0; offset <= 45; offset++) {
+      const d = new Date(year, 0, 20 + offset, 0, 0, 0, 0);
+      const parts = fmt.formatToParts(d);
+      if (parts.find(p => p.type === 'month')?.value === '1' && parts.find(p => p.type === 'day')?.value === '1') {
+        return d;
+      }
+    }
+  } catch (e) {}
+  return new Date(year, 1, 10, 0, 0, 0, 0);
 };
 
-const DIWALI_DATES = {
-  2024: [10, 1], 2025: [9, 20], 2026: [10, 8], 2027: [9, 29],
-  2028: [9, 17], 2029: [10, 5], 2030: [9, 26], 2031: [10, 14],
-  2032: [10, 2], 2033: [9, 22], 2034: [10, 10], 2035: [9, 30],
-  2036: [9, 19], 2037: [10, 7], 2038: [9, 27], 2039: [9, 17], 2040: [10, 4]
+// 2. Infinite Diwali via Jean Meeus Astronomical New Moon (Kartika Amavasya)
+const getMeeusNewMoonUTC = (k) => {
+  const T = k / 1236.85;
+  const T2 = T * T, T3 = T2 * T, T4 = T3 * T;
+  const rad = Math.PI / 180;
+  let JDE = 2451550.09766 + 29.530588861 * k + 0.00015437 * T2 - 0.000000150 * T3 + 0.00000000073 * T4;
+  const M = (2.5534 + 29.10535670 * k - 0.0000014 * T2) * rad;
+  const Mp = (201.5643 + 385.81693528 * k + 0.0107582 * T2) * rad;
+  const F = (160.7108 + 390.67050284 * k - 0.0016118 * T2) * rad;
+  JDE += -0.40720 * Math.sin(Mp) + 0.17241 * Math.sin(M) + 0.01608 * Math.sin(2 * Mp)
+       + 0.01039 * Math.sin(2 * F) + 0.00739 * Math.sin(Mp - M) - 0.00514 * Math.sin(Mp + M);
+  return new Date((JDE - 2440587.5) * 86400000);
+};
+
+const getInfiniteDiwali = (year) => {
+  const kApprox = Math.round((year + 0.82 - 2000) * 12.3685);
+  for (let dk = -1; dk <= 1; dk++) {
+    const nm = getMeeusNewMoonUTC(kApprox + dk);
+    const istDate = new Date(nm.getTime() + 5.5 * 3600000); // IST (UTC+5:30)
+    const m = istDate.getUTCMonth(), d = istDate.getUTCDate();
+    if (istDate.getUTCFullYear() === year && ((m === 9 && d >= 18) || (m === 10 && d <= 16))) {
+      return new Date(year, m, d, 0, 0, 0, 0);
+    }
+  }
+  return new Date(year, 10, 1, 0, 0, 0, 0);
 };
 
 const getDynamicHolidayDateForYear = (eventObj, year) => {
   if (!eventObj) return new Date(year, 0, 1);
 
   switch (eventObj.rule) {
-    case 'lunar-ny': {
-      const pair = LUNAR_NEW_YEAR_DATES[year] || [1, 10];
-      return new Date(year, pair[0], pair[1], 0, 0, 0, 0);
-    }
+    case 'lunar-ny':
+      return getInfiniteLunarNewYear(year);
     case 'family-day':
       return getNthWeekdayOfMonth(year, 1, 1, 3); // 3rd Monday in Feb
     case 'dst-start': {
@@ -247,10 +273,8 @@ const getDynamicHolidayDateForYear = (eventObj, year) => {
       d.setHours(2, 0, 0, 0);
       return d;
     }
-    case 'diwali': {
-      const pair = DIWALI_DATES[year] || [10, 1];
-      return new Date(year, pair[0], pair[1], 0, 0, 0, 0);
-    }
+    case 'diwali':
+      return getInfiniteDiwali(year);
     case 'thanksgiving-us':
       return getNthWeekdayOfMonth(year, 10, 4, 4); // 4th Thursday in Nov
     case 'winter-solstice':
@@ -1541,7 +1565,7 @@ function MainApp() {
         triggerToast('Confetti stopped');
         return false;
       }
-      confettiEndTimeRef.current = Date.now() + 60000;
+      confettiEndTimeRef.current = Date.now() + 8000;
       if (customToastMsg) triggerToast(customToastMsg);
       return true;
     });
@@ -1559,7 +1583,7 @@ function MainApp() {
     });
 
     if (justHitZero && !isConfettiActive) {
-      confettiEndTimeRef.current = Date.now() + 60000;
+      confettiEndTimeRef.current = Date.now() + 8000;
       setIsConfettiActive(true);
     }
   }, [now, targetTimeMode, isConfettiActive]);
@@ -1685,6 +1709,13 @@ function MainApp() {
       document.removeEventListener('visibilitychange', handleVisibilitySync);
     };
   }, []);
+
+  // Sync html & body background color with theme to prevent white rubber-band overscroll on mobile
+  useEffect(() => {
+    const bgHex = isDarkMode ? '#020617' : '#f8fafc';
+    document.documentElement.style.backgroundColor = bgHex;
+    document.body.style.backgroundColor = bgHex;
+  }, [isDarkMode]);
 
   // Interactive Particle & Confetti Canvas Effect
   useEffect(() => {
@@ -1884,6 +1915,10 @@ function MainApp() {
       isDarkMode ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-800'
     }`}>
       <style>{`
+        html, body {
+          background-color: ${isDarkMode ? '#020617' : '#f8fafc'};
+          overscroll-behavior-y: none;
+        }
         ::-webkit-scrollbar { width: 10px; }
         ::-webkit-scrollbar-track {
           background: ${isDarkMode ? '#020617' : '#f1f5f9'};
