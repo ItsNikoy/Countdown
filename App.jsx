@@ -1541,7 +1541,7 @@ function MainApp() {
         triggerToast('Confetti stopped');
         return false;
       }
-      confettiEndTimeRef.current = Date.now() + 8000;
+      confettiEndTimeRef.current = Date.now() + 60000;
       if (customToastMsg) triggerToast(customToastMsg);
       return true;
     });
@@ -1559,7 +1559,7 @@ function MainApp() {
     });
 
     if (justHitZero && !isConfettiActive) {
-      confettiEndTimeRef.current = Date.now() + 8000;
+      confettiEndTimeRef.current = Date.now() + 60000;
       setIsConfettiActive(true);
     }
   }, [now, targetTimeMode, isConfettiActive]);
