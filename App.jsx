@@ -1,6 +1,3 @@
-
-Johan Lasin <nikoy05yt@gmail.com>	Wed, Nov 25, 2026 at 5:12 PM
-To: "348419268@tdsb.ca" <348419268@tdsb.ca>
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import ReactDOM from 'react-dom';
 
