@@ -139,6 +139,20 @@ const IconChevronDown = ({ className = "w-4 h-4" }) => (
   </svg>
 );
 
+const IconKeyboard = ({ className = "w-4 h-4" }) => (
+  <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+    <rect x="2" y="4" width="20" height="16" rx="3" />
+    <path strokeLinecap="round" strokeLinejoin="round" d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M6 12h.01M10 12h.01M14 12h.01M18 12h.01M7 16h10" />
+  </svg>
+);
+
+const IconSettings = ({ className = "w-4 h-4" }) => (
+  <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+  </svg>
+);
+
 const ICON_COMPONENTS = {
   Bell: IconBell,
   TreePine: IconTree,
@@ -1528,18 +1542,57 @@ function MainApp() {
   const [activeCategory, setActiveCategory] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [sortOrder, setSortOrder] = useState('earliest');
-  const [targetTimeMode, setTargetTimeMode] = useState('AM');
+  const [targetTimeMode, setTargetTimeMode] = useState(() => {
+    try {
+      const saved = localStorage.getItem('festive_pulse_target_time_mode');
+      return saved === 'PM' ? 'PM' : 'AM';
+    } catch (e) {
+      return 'AM';
+    }
+  });
+  const [is24HourTime, setIs24HourTime] = useState(() => {
+    try {
+      return localStorage.getItem('festive_pulse_24h_time') === 'true';
+    } catch (e) {
+      return false;
+    }
+  });
   const [fullscreenEventId, setFullscreenEventId] = useState(null);
-  const [isDarkMode, setIsDarkMode] = useState(true);
-  const [fxMode, setFxMode] = useState('snow');
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    try {
+      const saved = localStorage.getItem('festive_pulse_dark_mode');
+      return saved === null ? true : saved === 'true';
+    } catch (e) {
+      return true;
+    }
+  });
+  const [fxMode, setFxMode] = useState(() => {
+    try {
+      const saved = localStorage.getItem('festive_pulse_fx_mode');
+      return ['snow', 'stars', 'off'].includes(saved) ? saved : 'snow';
+    } catch (e) {
+      return 'snow';
+    }
+  });
   const [openChimeMenuLocation, setOpenChimeMenuLocation] = useState(null);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
   const [now, setNow] = useState(() => new Date());
   const [isConfettiActive, setIsConfettiActive] = useState(false);
 
-  const prevTimeRef = useRef(null);
+  useEffect(() => {
+    try {
+      localStorage.setItem('festive_pulse_target_time_mode', targetTimeMode);
+      localStorage.setItem('festive_pulse_24h_time', String(is24HourTime));
+      localStorage.setItem('festive_pulse_dark_mode', String(isDarkMode));
+      localStorage.setItem('festive_pulse_fx_mode', fxMode);
+    } catch (e) {}
+  }, [targetTimeMode, is24HourTime, isDarkMode, fxMode]);
+
   const confettiEndTimeRef = useRef(0);
+  const dismissedHolidayWindowRef = useRef(null);
   const canvasRef = useRef(null);
+  const settingsMenuRef = useRef(null);
   const navChimeMenuRef = useRef(null);
   const fsChimeMenuRef = useRef(null);
   const mouseRef = useRef({ x: -1000, y: -1000, radius: 120, isDown: false });
@@ -1562,37 +1615,69 @@ function MainApp() {
     setIsConfettiActive((prev) => {
       if (prev) {
         confettiEndTimeRef.current = 0;
+        const activeWindow = HOLIDAY_CATALOG.find((ev) => {
+          const base = getDynamicHolidayDateForYear(ev, now.getFullYear());
+          if (now.getMonth() !== base.getMonth() || now.getDate() !== base.getDate()) return false;
+          const startHour = targetTimeMode === 'PM' ? 12 : 0;
+          return now.getHours() >= startHour && now.getHours() < 15;
+        });
+        if (activeWindow) {
+          dismissedHolidayWindowRef.current = `${activeWindow.id}-${now.getFullYear()}-${now.getMonth()}-${now.getDate()}-${targetTimeMode}`;
+        }
         triggerToast('Confetti stopped');
         return false;
       }
+      dismissedHolidayWindowRef.current = null;
       confettiEndTimeRef.current = Date.now() + 8000;
       if (customToastMsg) triggerToast(customToastMsg);
       return true;
     });
-  }, [triggerToast]);
+  }, [now, targetTimeMode, triggerToast]);
 
-  // Natural countdown zero-crossing confetti trigger
+  // Automatic holiday confetti window: 12:00 AM - 3:00 PM (when 12 AM selected) or 12:00 PM - 3:00 PM (when 12 PM selected)
   useEffect(() => {
-    const prev = prevTimeRef.current;
-    prevTimeRef.current = now;
-    if (!prev) return;
+    const startHour = targetTimeMode === 'PM' ? 12 : 0;
+    const endHour = 15; // 3:00 PM
 
-    const justHitZero = HOLIDAY_CATALOG.some((ev) => {
-      const target = getNextTargetDate(ev, prev, targetTimeMode);
-      return prev < target && now >= target;
+    const matchingHoliday = HOLIDAY_CATALOG.find((ev) => {
+      const base = getDynamicHolidayDateForYear(ev, now.getFullYear());
+      if (now.getMonth() !== base.getMonth() || now.getDate() !== base.getDate()) return false;
+      const currentHour = now.getHours();
+      return currentHour >= startHour && currentHour < endHour;
     });
 
-    if (justHitZero && !isConfettiActive) {
-      confettiEndTimeRef.current = Date.now() + 8000;
-      setIsConfettiActive(true);
+    if (matchingHoliday) {
+      const windowKey = `${matchingHoliday.id}-${now.getFullYear()}-${now.getMonth()}-${now.getDate()}-${targetTimeMode}`;
+      if (dismissedHolidayWindowRef.current !== windowKey) {
+        const windowEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), endHour, 0, 0, 0).getTime();
+        if (confettiEndTimeRef.current < windowEnd) {
+          confettiEndTimeRef.current = windowEnd;
+        }
+        if (!isConfettiActive) {
+          setIsConfettiActive(true);
+        }
+      }
     }
   }, [now, targetTimeMode, isConfettiActive]);
 
   const filteredEvents = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
+    const WINTER_EVENT_IDS = new Set([
+      'nye-day',
+      'lunar-ny',
+      'valentines',
+      'family-day',
+      'solstice',
+      'xmas-eve',
+      'xmas',
+      'boxing-day',
+      'nye-eve'
+    ]);
     return HOLIDAY_CATALOG
       .filter((item) => {
-        const matchesCategory = activeCategory === 'all' || item.category === activeCategory;
+        const matchesCategory =
+          activeCategory === 'all' ||
+          (activeCategory === 'winter' ? WINTER_EVENT_IDS.has(item.id) : item.category === activeCategory);
         const matchesSearch =
           !query ||
           item.title.toLowerCase().includes(query) ||
@@ -1643,15 +1728,18 @@ function MainApp() {
   // Outside click & keyboard shortcuts ('Escape', 'm' mute toggle, 'c' confetti)
   useEffect(() => {
     const handleClickOutside = (e) => {
-      const inNav = navChimeMenuRef.current && navChimeMenuRef.current.contains(e.target);
+      const inSettings = settingsMenuRef.current && settingsMenuRef.current.contains(e.target);
+      const inNavChime = navChimeMenuRef.current && navChimeMenuRef.current.contains(e.target);
       const inFs = fsChimeMenuRef.current && fsChimeMenuRef.current.contains(e.target);
-      if (!inNav && !inFs) setOpenChimeMenuLocation(null);
+      if (!inSettings) setIsSettingsOpen(false);
+      if (!inNavChime && !inFs) setOpenChimeMenuLocation(null);
     };
 
     const handleKeyDown = (e) => {
       if (e.target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
       if (e.key === 'Escape') {
         setOpenChimeMenuLocation(null);
+        setIsSettingsOpen(false);
         setFullscreenEventId(null);
       } else if (e.key.toLowerCase() === 'm') {
         if (activeTrack === 'off') {
@@ -1902,13 +1990,17 @@ function MainApp() {
   const formattedLiveTime = useMemo(
     () =>
       now.toLocaleTimeString(undefined, {
-        hour: 'numeric',
+        hour: is24HourTime ? '2-digit' : 'numeric',
         minute: '2-digit',
         second: '2-digit',
-        hour12: true
+        hour12: !is24HourTime
       }),
-    [now]
+    [now, is24HourTime]
   );
+
+  const handleBlockClipboard = useCallback((e) => {
+    e.preventDefault();
+  }, []);
 
   return (
     <div className={`min-h-screen transition-colors duration-500 font-sans relative overflow-x-hidden ${
@@ -1940,524 +2032,3 @@ function MainApp() {
           }
           .fs-toolbar {
             position: absolute !important;
-            top: 0.45rem !important;
-            right: 0.75rem !important;
-            gap: 0.35rem !important;
-          }
-          .fs-toolbar-time-top {
-            display: flex !important;
-            padding: 0.25rem 0.55rem !important;
-            font-size: 0.65rem !important;
-            border-radius: 0.6rem !important;
-          }
-          .fs-bottom-time-mobile {
-            display: none !important;
-          }
-          .fs-toolbar button {
-            padding: 0.25rem 0.55rem !important;
-            font-size: 0.65rem !important;
-            border-radius: 0.6rem !important;
-          }
-          .fs-content-wrap {
-            padding-top: 1.5rem !important;
-            padding-bottom: 0.25rem !important;
-            gap: 0.35rem !important;
-            display: flex !important;
-            flex-direction: column !important;
-            align-items: center !important;
-          }
-          .fs-content-wrap > * + * {
-            margin-top: 0.3rem !important;
-          }
-          .fs-badge {
-            padding: 0.15rem 0.6rem !important;
-            font-size: 0.6rem !important;
-          }
-          .fs-title {
-            font-size: 1.45rem !important;
-            line-height: 1.15 !important;
-          }
-          .fs-grid {
-            gap: 0.45rem !important;
-            max-width: 24rem !important;
-            width: 100% !important;
-          }
-          .fs-tile {
-            padding: 0.35rem 0.4rem !important;
-            border-radius: 0.75rem !important;
-          }
-          .fs-digit {
-            font-size: 1.25rem !important;
-            line-height: 1.15 !important;
-          }
-          .fs-unit {
-            font-size: 0.55rem !important;
-            margin-top: 0.1rem !important;
-          }
-          .fs-desc {
-            font-size: 0.7rem !important;
-            line-height: 1.25 !important;
-            max-width: 34rem !important;
-            display: -webkit-box !important;
-            -webkit-line-clamp: 1 !important;
-            -webkit-box-orient: vertical !important;
-            overflow: hidden !important;
-          }
-          .fs-quote {
-            font-size: 0.65rem !important;
-            line-height: 1.2 !important;
-            max-width: 32rem !important;
-            display: -webkit-box !important;
-            -webkit-line-clamp: 1 !important;
-            -webkit-box-orient: vertical !important;
-            overflow: hidden !important;
-          }
-          .fs-target {
-            font-size: 0.6rem !important;
-            padding-top: 0 !important;
-          }
-        }
-      `}</style>
-
-      <canvas ref={canvasRef} className="fixed inset-0 pointer-events-none z-[150]" />
-
-      {/* Nav Header */}
-      <nav className={`sticky top-0 z-40 backdrop-blur-xl border-b px-4 lg:px-8 py-3.5 transition-colors ${
-        isDarkMode ? 'border-slate-800/80 bg-slate-950/80 text-slate-100' : 'border-slate-200/50 bg-white/70 text-slate-900'
-      }`}>
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-3 md:gap-0">
-          <div className="flex items-center space-x-3">
-            <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-amber-500 via-rose-500 to-emerald-500 flex items-center justify-center text-white shadow-lg">
-              <IconSparkles className="w-5 h-5 animate-pulse" />
-            </div>
-            <div>
-              <h1 className="font-serif font-bold text-lg md:text-xl tracking-tight bg-gradient-to-r from-amber-500 via-rose-500 to-emerald-500 bg-clip-text text-transparent">
-                Festive Pulse
-              </h1>
-              <p className="text-[11px] text-slate-400 font-medium">Holiday Countdown Dashboard</p>
-            </div>
-            <div
-              aria-label="Current local time"
-              className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-xl border text-xs font-mono font-semibold tabular-nums ${
-                isDarkMode
-                  ? 'bg-slate-900/90 border-slate-800 text-amber-400'
-                  : 'bg-slate-100 border-slate-200 text-amber-600'
-              }`}
-            >
-              <IconClock className="w-3.5 h-3.5 shrink-0" />
-              <span>{formattedLiveTime}</span>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center justify-center space-x-2 sm:space-x-3">
-            <button
-              onClick={() => toggleConfettiWaterfall("Test Celebration!")}
-              className={`px-3 py-1.5 rounded-xl text-white font-bold text-xs shadow-md transition flex items-center space-x-1.5 ${
-                isConfettiActive
-                  ? 'bg-rose-500 hover:bg-rose-600 animate-pulse'
-                  : 'bg-gradient-to-r from-amber-500 via-rose-500 to-purple-500 hover:from-amber-600 hover:to-purple-600'
-              }`}
-            >
-              <IconParty className={`w-4 h-4 text-white ${!isConfettiActive ? 'animate-bounce' : ''}`} />
-              <span>{isConfettiActive ? 'Stop Confetti' : 'Confetti 🎉'}</span>
-            </button>
-
-            <div className={`flex items-center p-1 rounded-xl border text-xs font-semibold ${
-              isDarkMode ? 'bg-slate-900 border-slate-700' : 'bg-slate-100 border-slate-300'
-            }`}>
-              <span className="text-[10px] uppercase font-bold text-slate-400 px-2 hidden sm:inline">Finish:</span>
-              <button
-                onClick={() => {
-                  setTargetTimeMode('AM');
-                  triggerToast('Finish Countdown set to 12:00 AM (Midnight)');
-                }}
-                className={`px-2.5 py-1 rounded-lg transition ${
-                  targetTimeMode === 'AM'
-                    ? 'bg-amber-500 text-slate-950 font-bold shadow-sm'
-                    : isDarkMode ? 'text-slate-300 hover:text-white' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                12 AM
-              </button>
-              <button
-                onClick={() => {
-                  setTargetTimeMode('PM');
-                  triggerToast('Finish Countdown set to 12:00 PM (Noon)');
-                }}
-                className={`px-2.5 py-1 rounded-lg transition ${
-                  targetTimeMode === 'PM'
-                    ? 'bg-amber-500 text-slate-950 font-bold shadow-sm'
-                    : isDarkMode ? 'text-slate-300 hover:text-white' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                12 PM
-              </button>
-            </div>
-
-            <button
-              onClick={() => {
-                const modes = ['snow', 'stars', 'off'];
-                const next = modes[(modes.indexOf(fxMode) + 1) % modes.length];
-                setFxMode(next);
-                triggerToast(`Particles: ${next.toUpperCase()}`);
-              }}
-              className={`px-3 py-1.5 rounded-xl border text-xs font-semibold flex items-center space-x-1.5 transition ${
-                isDarkMode ? 'bg-slate-900 border-slate-700 text-slate-200' : 'bg-slate-100 border-slate-300 text-slate-700'
-              }`}
-            >
-              <IconSparkles className="w-3.5 h-3.5 text-amber-400" />
-              <span className="capitalize">{fxMode}</span>
-            </button>
-
-            <div className="relative" ref={navChimeMenuRef}>
-              <button
-                aria-expanded={openChimeMenuLocation === 'nav'}
-                aria-haspopup="menu"
-                onClick={() => setOpenChimeMenuLocation(openChimeMenuLocation === 'nav' ? null : 'nav')}
-                className={`p-2.5 rounded-xl transition flex items-center space-x-2 text-xs font-semibold border ${
-                  activeTrack !== 'off'
-                    ? 'bg-amber-500/10 text-amber-500 border-amber-500/30'
-                    : isDarkMode ? 'bg-slate-800/80 border-slate-700 text-slate-300' : 'bg-slate-100 border-slate-200 text-slate-600'
-                }`}
-              >
-                {activeTrack !== 'off' ? (
-                  <IconVolume className="w-4 h-4 text-amber-500 animate-bounce" />
-                ) : (
-                  <IconVolumeOff className="w-4 h-4" />
-                )}
-                <span className="hidden sm:inline">Chimes</span>
-                <IconChevronDown className={`w-3.5 h-3.5 transition-transform ${openChimeMenuLocation === 'nav' ? 'rotate-180' : ''}`} />
-              </button>
-
-              {openChimeMenuLocation === 'nav' && (
-                <ChimePopover
-                  activeTrack={activeTrack}
-                  isDarkMode={isDarkMode}
-                  onSelectTrack={handleSelectTrack}
-                />
-              )}
-            </div>
-
-            <button
-              aria-label="Toggle color theme"
-              onClick={() => {
-                setIsDarkMode(!isDarkMode);
-                triggerToast(`Theme switched to ${!isDarkMode ? 'Dark' : 'Light'} Mode`);
-              }}
-              className={`p-2.5 rounded-xl transition ${
-                isDarkMode ? 'bg-slate-800/80 text-slate-300 hover:bg-slate-700' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-              }`}
-            >
-              {isDarkMode ? <IconSun className="w-4 h-4 text-amber-400" /> : <IconMoon className="w-4 h-4" />}
-            </button>
-          </div>
-        </div>
-      </nav>
-
-      <main className="max-w-7xl mx-auto px-4 lg:px-8 py-8 space-y-10">
-        {/* Spotlight Banner */}
-        {heroEvent && (
-          <section className={`relative rounded-3xl overflow-hidden p-6 sm:p-10 border border-amber-500/20 shadow-2xl bg-gradient-to-br ${heroEvent.themeBg || 'from-emerald-950 via-slate-900 to-rose-950'} text-white transition-all duration-500`}>
-            <div className="absolute top-0 right-0 p-8 opacity-10 pointer-events-none">
-              <IconMapper name={heroEvent.icon} className="w-80 h-80" />
-            </div>
-
-            <div className="relative z-10 flex flex-col lg:flex-row items-center justify-between gap-8">
-              <div className="space-y-4 text-center lg:text-left max-w-xl">
-                <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-white/10 backdrop-blur-md text-amber-300 text-xs font-bold uppercase tracking-wider border border-white/20">
-                  <IconSparkles className="w-3.5 h-3.5" />
-                  <span>Upcoming Spotlight</span>
-                </div>
-                <h2 className="text-4xl sm:text-6xl font-serif font-extrabold tracking-tight drop-shadow-md">
-                  {heroEvent.title}
-                </h2>
-                <p className="text-slate-300 text-sm sm:text-base leading-relaxed">
-                  {heroEvent.description}
-                </p>
-
-                <div className="flex flex-wrap items-center justify-center lg:justify-start gap-3 pt-2">
-                  <button
-                    onClick={() => handleOpenFullscreen(heroEvent)}
-                    className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs sm:text-sm shadow-lg transition flex items-center space-x-2"
-                  >
-                    <IconMaximize className="w-4 h-4" />
-                    <span>Fullscreen View</span>
-                  </button>
-                </div>
-              </div>
-
-              {heroTime.isToday ? (
-                <div className="bg-slate-900/80 backdrop-blur-md p-6 rounded-3xl border border-amber-500/40 text-center w-full lg:w-auto shadow-2xl animate-pulse">
-                  <span className="text-xs font-bold uppercase tracking-widest text-amber-400 block mb-1">
-                    IT'S TODAY! 🎉
-                  </span>
-                  <h3 className="font-serif text-3xl sm:text-5xl font-extrabold text-white">
-                    Happy {heroEvent.title}!
-                  </h3>
-                </div>
-              ) : (
-                <div className="grid grid-cols-4 gap-2 sm:gap-4 text-center w-full lg:w-auto">
-                  {[
-                    { label: 'Days', value: heroTime.days },
-                    { label: 'Hours', value: heroTime.hours },
-                    { label: 'Mins', value: heroTime.minutes },
-                    { label: 'Secs', value: heroTime.seconds }
-                  ].map((unit, i) => (
-                    <div key={i} className="bg-slate-900/60 backdrop-blur-md p-3 sm:p-6 rounded-2xl min-w-[70px] sm:min-w-[105px] border border-white/10 shadow-inner">
-                      <span className="block font-serif text-3xl sm:text-5xl font-extrabold text-amber-400">
-                        {String(unit.value).padStart(2, '0')}
-                      </span>
-                      <span className="text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest mt-1 block">
-                        {unit.label}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </section>
-        )}
-
-        {/* Filter Controls */}
-        <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-          <div className={`flex items-center space-x-1.5 sm:space-x-2 p-1.5 rounded-2xl w-full md:w-auto overflow-x-auto ${
-            isDarkMode ? 'bg-slate-900/90 border border-slate-800' : 'bg-slate-200/60'
-          }`}>
-            {[
-              { id: 'all', label: 'All Events' },
-              { id: 'global', label: 'Global' },
-              { id: 'seasonal', label: 'Seasonal' }
-            ].map((cat) => (
-              <button
-                key={cat.id}
-                onClick={() => {
-                  setActiveCategory(cat.id);
-                  triggerToast(`Filter: ${cat.label}`);
-                }}
-                className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold transition whitespace-nowrap ${
-                  activeCategory === cat.id
-                    ? (isDarkMode ? 'bg-slate-800 text-white shadow-sm' : 'bg-white text-slate-900 shadow-sm')
-                    : (isDarkMode ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900')
-                }`}
-              >
-                {cat.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="flex items-center space-x-3 w-full md:w-auto">
-            <div className="relative flex-1 md:w-64">
-              <IconSearch className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Search holiday..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className={`w-full pl-9 pr-4 py-2 rounded-xl border text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50 ${
-                  isDarkMode
-                    ? 'bg-slate-900/90 border-slate-800 text-slate-100 placeholder-slate-500'
-                    : 'bg-white/90 border-slate-200 text-slate-900 placeholder-slate-400'
-                }`}
-              />
-            </div>
-
-            <select
-              aria-label="Sort holidays"
-              value={sortOrder}
-              onChange={(e) => setSortOrder(e.target.value)}
-              className={`px-3 py-2 rounded-xl border text-xs sm:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-amber-500/50 ${
-                isDarkMode
-                  ? 'bg-slate-900 border-slate-800 text-slate-100'
-                  : 'bg-white border-slate-200 text-slate-900'
-              }`}
-            >
-              <option value="earliest">Earliest First</option>
-              <option value="latest">Latest First</option>
-              <option value="alphabetical">Alphabetical</option>
-            </select>
-          </div>
-        </div>
-
-        {/* Holiday Cards Grid */}
-        <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredEvents.length === 0 ? (
-            <div className="col-span-full py-16 text-center text-slate-400">
-              <IconCalendar className="w-12 h-12 mx-auto mb-3 opacity-50" />
-              <p className="text-base font-medium">No holiday events found matching your search.</p>
-            </div>
-          ) : (
-            filteredEvents.map((item) => (
-              <HolidayCard
-                key={item.id}
-                item={item}
-                itemTime={computeCountdown(item, now, targetTimeMode)}
-                isDarkMode={isDarkMode}
-                onOpenFullscreen={handleOpenFullscreen}
-              />
-            ))
-          )}
-        </section>
-      </main>
-
-      {/* Fullscreen Modal View */}
-      {fullscreenEvent && fullscreenTime && (
-        <div className={`fs-modal-root fixed inset-0 z-[100] flex flex-col items-center justify-between px-4 py-3 sm:p-6 bg-gradient-to-br ${fullscreenEvent.themeBg || 'from-emerald-950 via-slate-900 to-rose-950'} text-white overflow-y-auto`}>
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 opacity-10 pointer-events-none">
-            <IconMapper name={fullscreenEvent.icon} className="w-[16rem] h-[16rem] sm:w-[30rem] sm:h-[30rem] md:w-[40rem] md:h-[40rem]" />
-          </div>
-
-          <div className="fs-toolbar w-full flex items-center justify-end space-x-1.5 sm:space-x-3 z-[110] shrink-0">
-            <div
-              aria-label="Current local time"
-              className="fs-toolbar-time-top hidden sm:flex px-3.5 py-2 rounded-2xl bg-white/10 backdrop-blur-md border border-white/25 text-amber-300 text-xs font-mono font-semibold tabular-nums items-center space-x-1.5 shadow-lg"
-            >
-              <IconClock className="w-4 h-4 shrink-0" />
-              <span>{formattedLiveTime}</span>
-            </div>
-
-            <button
-              onClick={() => {
-                const modes = ['snow', 'stars', 'off'];
-                const next = modes[(modes.indexOf(fxMode) + 1) % modes.length];
-                setFxMode(next);
-                triggerToast(`Particles: ${next.toUpperCase()}`);
-              }}
-              className="px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-xl sm:rounded-2xl bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/25 text-white text-[11px] sm:text-xs font-semibold flex items-center space-x-1 sm:space-x-1.5 transition shadow-lg"
-            >
-              <IconSparkles className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400" />
-              <span className="capitalize">{fxMode}</span>
-            </button>
-
-            <button
-              onClick={() => toggleConfettiWaterfall(`Celebration for ${fullscreenEvent.title}!`)}
-              className={`px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-xl sm:rounded-2xl text-white font-bold text-[11px] sm:text-xs shadow-lg transition flex items-center space-x-1 sm:space-x-1.5 ${
-                isConfettiActive
-                  ? 'bg-rose-500 hover:bg-rose-600 animate-pulse'
-                  : 'bg-gradient-to-r from-amber-500 via-rose-500 to-purple-500 hover:from-amber-600 hover:to-purple-600'
-              }`}
-            >
-              <IconParty className={`w-3.5 h-3.5 sm:w-4 sm:h-4 text-white ${!isConfettiActive ? 'animate-bounce' : ''}`} />
-              <span>{isConfettiActive ? 'Stop' : 'Confetti 🎉'}</span>
-            </button>
-
-            <div className="relative" ref={fsChimeMenuRef}>
-              <button
-                aria-expanded={openChimeMenuLocation === 'fullscreen'}
-                aria-haspopup="menu"
-                onClick={() => setOpenChimeMenuLocation(openChimeMenuLocation === 'fullscreen' ? null : 'fullscreen')}
-                className="px-2.5 py-1.5 sm:px-4 sm:py-2.5 rounded-xl sm:rounded-2xl bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/25 text-white text-[11px] sm:text-xs font-semibold flex items-center space-x-1.5 sm:space-x-2 transition shadow-lg"
-              >
-                {activeTrack !== 'off' ? (
-                  <IconVolume className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400 animate-bounce" />
-                ) : (
-                  <IconVolumeOff className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                )}
-                <span>Chimes</span>
-                <IconChevronDown className={`w-3 h-3 sm:w-3.5 sm:h-3.5 transition-transform ${openChimeMenuLocation === 'fullscreen' ? 'rotate-180' : ''}`} />
-              </button>
-
-              {openChimeMenuLocation === 'fullscreen' && (
-                <ChimePopover
-                  activeTrack={activeTrack}
-                  isDarkMode={true}
-                  onSelectTrack={handleSelectTrack}
-                />
-              )}
-            </div>
-
-            <button
-              aria-label="Exit fullscreen"
-              onClick={() => setFullscreenEventId(null)}
-              className="p-2 sm:p-3 rounded-full bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/20 transition shadow-lg"
-            >
-              <IconMinimize className="w-4 h-4 sm:w-6 sm:h-6" />
-            </button>
-          </div>
-
-          <div className="fs-content-wrap max-w-4xl w-full text-center space-y-2.5 sm:space-y-5 relative z-10 my-auto py-1 sm:py-2">
-            <div className="fs-badge inline-flex items-center space-x-1.5 sm:space-x-2 px-3 py-1 sm:px-4 sm:py-1.5 rounded-full bg-white/10 backdrop-blur-md text-amber-300 text-[10px] sm:text-sm font-bold uppercase tracking-widest border border-white/20">
-              <IconMapper name={fullscreenEvent.icon} className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-              <span>{fullscreenEvent.category} Celebration</span>
-            </div>
-
-            <h2 className="fs-title text-3xl sm:text-5xl md:text-7xl font-serif font-extrabold tracking-tight drop-shadow-2xl leading-tight">
-              {fullscreenEvent.title}
-            </h2>
-
-            {fullscreenTime.isToday ? (
-              <div className="fs-tile py-4 px-4 sm:py-8 sm:px-6 rounded-2xl sm:rounded-3xl bg-white/10 backdrop-blur-xl border border-amber-400/40 shadow-2xl animate-pulse">
-                <span className="text-xs sm:text-sm font-bold uppercase tracking-widest text-amber-300 block mb-1 sm:mb-2">
-                  CELEBRATING TODAY 🎉
-                </span>
-                <p className="fs-digit font-serif text-2xl sm:text-5xl md:text-6xl font-extrabold text-white">
-                  Happy {fullscreenEvent.title}!
-                </p>
-              </div>
-            ) : (
-              <div className="fs-grid grid grid-cols-4 gap-2 sm:gap-5 max-w-3xl mx-auto">
-                {[
-                  { label: 'Days', shortLabel: 'Days', value: fullscreenTime.days },
-                  { label: 'Hours', shortLabel: 'Hrs', value: fullscreenTime.hours },
-                  { label: 'Minutes', shortLabel: 'Mins', value: fullscreenTime.minutes },
-                  { label: 'Seconds', shortLabel: 'Secs', value: fullscreenTime.seconds }
-                ].map((unit, idx) => (
-                  <div key={idx} className="fs-tile bg-slate-950/60 backdrop-blur-xl py-2.5 px-2 sm:p-6 rounded-2xl sm:rounded-3xl border border-white/15 shadow-2xl">
-                    <span className="fs-digit block font-serif text-2xl sm:text-5xl md:text-6xl font-extrabold text-amber-400">
-                      {String(unit.value).padStart(2, '0')}
-                    </span>
-                    <span className="fs-unit text-[10px] sm:text-sm font-bold text-slate-300 uppercase tracking-wider sm:tracking-widest mt-1 sm:mt-1.5 block">
-                      <span className="sm:hidden">{unit.shortLabel}</span>
-                      <span className="hidden sm:inline">{unit.label}</span>
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <p className="fs-desc text-slate-200 text-xs sm:text-lg max-w-2xl mx-auto leading-relaxed px-2">
-              {fullscreenEvent.description}
-            </p>
-
-            {fullscreenEvent.quote && (
-              <blockquote className="fs-quote italic text-amber-200/85 text-xs sm:text-base font-serif max-w-xl mx-auto px-2">
-                “{fullscreenEvent.quote}”
-              </blockquote>
-            )}
-
-            <div className="pt-0.5 sm:pt-1">
-              <div className="fs-target inline-flex items-center space-x-1.5 px-3.5 py-1 sm:px-4 sm:py-1.5 rounded-full bg-slate-950/60 backdrop-blur-md border border-white/15 text-[11px] sm:text-sm font-semibold text-amber-200 tracking-wide shadow-md">
-                <IconCalendar className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400 shrink-0" />
-                <span>
-                  Target Date: {fullscreenTime.targetDate.toLocaleDateString(undefined, {
-                    weekday: 'long',
-                    month: 'long',
-                    day: 'numeric',
-                    year: 'numeric'
-                  })}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div
-            aria-label="Current local time"
-            className="fs-bottom-time-mobile sm:hidden shrink-0 z-[110] mb-1 px-3.5 py-1.5 rounded-full bg-slate-950/70 backdrop-blur-md border border-white/20 text-amber-300 text-xs font-mono font-semibold tabular-nums flex items-center space-x-1.5 shadow-lg"
-          >
-            <IconClock className="w-3.5 h-3.5 shrink-0" />
-            <span>{formattedLiveTime}</span>
-          </div>
-        </div>
-      )}
-
-      <ToastPortal message={toastMessage} />
-    </div>
-  );
-}
-
-export default function App() {
-  return (
-    <ErrorBoundary>
-      <MainApp />
-    </ErrorBoundary>
-  );
-}
