@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import ReactDOM from 'react-dom';
 
 /* ============================================================================
- * 1. ICON REGISTRY MODULE
+ * 1. Icons Included in the dashboard by me
  * ============================================================================ */
 
 const IconSparkles = ({ className = "w-5 h-5" }) => (
@@ -238,7 +238,7 @@ const getAstronomicalSolsticeDate = (year, isWinter) => {
     : 2451716.56767 + 365241.62603 * y + 0.00325 * y * y + 0.00888 * y * y * y;
   const utcMillis = (jde0 - 2440587.5) * 86400000;
   const d = new Date(utcMillis);
-  return new Date(year, d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
 };
 
 // 1. Infinite Lunar New Year via Browser ICU Astronomical Chinese Calendar
@@ -248,7 +248,11 @@ const getInfiniteLunarNewYear = (year) => {
     for (let offset = 0; offset <= 45; offset++) {
       const d = new Date(year, 0, 20 + offset, 0, 0, 0, 0);
       const parts = fmt.formatToParts(d);
-      if (parts.find(p => p.type === 'month')?.value === '1' && parts.find(p => p.type === 'day')?.value === '1') {
+      const monthRaw = parts.find(p => p.type === 'month')?.value || '';
+      const dayRaw = parts.find(p => p.type === 'day')?.value || '';
+      const monthNum = Number(monthRaw.replace(/\D/g, ''));
+      const dayNum = Number(dayRaw.replace(/\D/g, ''));
+      if (monthNum === 1 && dayNum === 1 && !monthRaw.toLowerCase().includes('leap')) {
         return d;
       }
     }
@@ -276,7 +280,7 @@ const getInfiniteDiwali = (year) => {
     const nm = getMeeusNewMoonUTC(kApprox + dk);
     const istDate = new Date(nm.getTime() + 5.5 * 3600000); // IST (UTC+5:30)
     const m = istDate.getUTCMonth(), d = istDate.getUTCDate();
-    if (istDate.getUTCFullYear() === year && ((m === 9 && d >= 18) || (m === 10 && d <= 16))) {
+    if (istDate.getUTCFullYear() === year && ((m === 9 && d >= 16) || (m === 10 && d <= 18))) {
       return new Date(year, m, d, 0, 0, 0, 0);
     }
   }
@@ -293,8 +297,8 @@ const getDynamicHolidayDateForYear = (eventObj, year) => {
       return getNthWeekdayOfMonth(year, 1, 1, 3); // 3rd Monday in Feb
     case 'dst-start': {
       const d = getNthWeekdayOfMonth(year, 2, 0, 2); // 2nd Sunday in March
-      d.setHours(2, 0, 0, 0);
-      return d;
+      // Clocks jump directly from 1:59:59 AM -> 3:00:00 AM; anchoring 1ms past 1:59:59.999 hits the exact transition instant
+      return new Date(new Date(year, 2, d.getDate(), 1, 59, 59, 999).getTime() + 1);
     }
     case 'easter':
       return getEasterSunday(year);
@@ -634,6 +638,10 @@ const applyTargetTimeOfDay = (baseDate, eventObj, targetTimeMode) => {
   );
 
   if (isDST) {
+    if (eventObj.id === 'dst-start' || eventObj.rule === 'dst-start') {
+      // Exact spring-forward instant (1:59:59 AM -> 3:00:00 AM) without double-jumping an extra hour
+      return new Date(new Date(target.getFullYear(), target.getMonth(), target.getDate(), 1, 59, 59, 999).getTime() + 1);
+    }
     target.setHours(2, 0, 0, 0);
     return target;
   }
