@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import ReactDOM from 'react-dom';
 
 /* ============================================================================
- * 1. Icons Included in the dashboard by me
+ * 1. Icons Included in the Countdown Dashboard
  * ============================================================================ */
 
 const IconSparkles = ({ className = "w-5 h-5" }) => (
