@@ -153,6 +153,36 @@ const IconSettings = ({ className = "w-4 h-4" }) => (
   </svg>
 );
 
+const IconPlay = ({ className = "w-4 h-4" }) => (
+  <svg className={className} fill="currentColor" viewBox="0 0 24 24">
+    <path d="M8 5v14l11-7z" />
+  </svg>
+);
+
+const IconPause = ({ className = "w-4 h-4" }) => (
+  <svg className={className} fill="currentColor" viewBox="0 0 24 24">
+    <path d="M6 5h4v14H6zm8 0h4v14h-4z" />
+  </svg>
+);
+
+const IconPrev = ({ className = "w-4 h-4" }) => (
+  <svg className={className} fill="currentColor" viewBox="0 0 24 24">
+    <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
+  </svg>
+);
+
+const IconNext = ({ className = "w-4 h-4" }) => (
+  <svg className={className} fill="currentColor" viewBox="0 0 24 24">
+    <path d="M16 6h2v12h-2zm-10 0l8.5 6L6 18z" />
+  </svg>
+);
+
+const IconPower = ({ className = "w-4 h-4" }) => (
+  <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M12 2v10m6.364-5.364a9 9 0 11-12.728 0" />
+  </svg>
+);
+
 const ICON_COMPONENTS = {
   Bell: IconBell,
   TreePine: IconTree,
@@ -727,6 +757,13 @@ const TRACK_DURATIONS = {
   off: 10.0
 };
 
+const formatTrackSeconds = (secs) => {
+  const safe = Math.max(0, Math.floor(secs || 0));
+  const mins = Math.floor(safe / 60);
+  const rem = safe % 60;
+  return `${mins}:${String(rem).padStart(2, '0')}`;
+};
+
 let cachedCarrierWavUrl = null;
 const getSilentWavUrl = () => {
   if (cachedCarrierWavUrl) return cachedCarrierWavUrl;
@@ -775,7 +812,7 @@ const getPngArtworkUrl = () => {
 
       const pad = 76;
       const size = 512 - pad * 2;
-      const radius = 96;
+      const radius = 144;
 
       ctx.save();
       ctx.beginPath();
@@ -810,10 +847,10 @@ const getPngArtworkUrl = () => {
 
       ctx.beginPath();
       ctx.moveTo(13, 3);
-      ctx.quadraticCurveTo(13.8, 11.2, 21, 12);
-      ctx.quadraticCurveTo(13.8, 12.8, 13, 21);
-      ctx.quadraticCurveTo(12.2, 12.8, 5, 12);
-      ctx.quadraticCurveTo(12.2, 11.2, 13, 3);
+      ctx.quadraticCurveTo(14.3, 10.7, 21, 12);
+      ctx.quadraticCurveTo(14.3, 13.3, 13, 21);
+      ctx.quadraticCurveTo(11.7, 13.3, 5, 12);
+      ctx.quadraticCurveTo(11.7, 10.7, 13, 3);
       ctx.closePath();
       ctx.stroke();
 
@@ -835,9 +872,13 @@ const getPngArtworkUrl = () => {
   return cachedPngArtwork || '';
 };
 
-function useFestiveAudioEngine(onNotify) {
+function useFestiveAudioEngine(onNotify, spotlightTrack = 'ambient') {
   const [activeTrack, setActiveTrack] = useState('off');
+  const [playbackTime, setPlaybackTime] = useState(0);
   const activeTrackRef = useRef('off');
+  const spotlightTrackRef = useRef(spotlightTrack);
+  spotlightTrackRef.current = spotlightTrack;
+  const lastPlayTrackRef = useRef(spotlightTrack);
   const hasUserInteractedRef = useRef(false);
   const audioCtxRef = useRef(null);
   const masterGainRef = useRef(null);
@@ -848,30 +889,47 @@ function useFestiveAudioEngine(onNotify) {
   const keepAliveOscRef = useRef(null);
   const chimeTimerRef = useRef(null);
   const loopAnchorCtxTimeRef = useRef(0);
+  const pausedElapsedRef = useRef(0);
   const loopStartTimesRef = useRef([]);
   const nextNoteTimeRef = useRef(0);
   const songStepRef = useRef(0);
+  const loopIdRef = useRef(0);
+
+  const getCurrentPosition = useCallback((trackId) => {
+    const fallbackTrack = spotlightTrackRef.current || 'ambient';
+    const targetTrack = trackId === 'off' ? (lastPlayTrackRef.current || fallbackTrack) : trackId;
+    const duration = TRACK_DURATIONS[targetTrack] || 60;
+    if (trackId === 'off') {
+      return Math.min(Math.max(0, pausedElapsedRef.current), duration);
+    }
+    if (audioCtxRef.current && loopAnchorCtxTimeRef.current > 0) {
+      const elapsed = Math.max(0, audioCtxRef.current.currentTime - loopAnchorCtxTimeRef.current);
+      return elapsed >= duration ? elapsed % duration : elapsed;
+    }
+    return Math.min(Math.max(0, pausedElapsedRef.current), duration);
+  }, []);
 
   const updateMediaPositionState = useCallback((trackId, resetToZero = false) => {
+    const fallbackTrack = spotlightTrackRef.current || 'ambient';
+    const targetTrack = trackId === 'off' ? (lastPlayTrackRef.current || fallbackTrack) : trackId;
+    const duration = TRACK_DURATIONS[targetTrack] || 60;
+    const position = resetToZero ? 0 : getCurrentPosition(trackId);
+    setPlaybackTime((prev) => (Math.abs(prev - position) >= 0.05 || resetToZero ? position : prev));
+
     if (!('mediaSession' in navigator) || typeof navigator.mediaSession.setPositionState !== 'function') return;
-    if (trackId === 'off') return;
     try {
-      const duration = TRACK_DURATIONS[trackId] || 60;
-      let position = 0;
-      if (!resetToZero && audioCtxRef.current && loopAnchorCtxTimeRef.current > 0) {
-        const elapsed = Math.max(0, audioCtxRef.current.currentTime - loopAnchorCtxTimeRef.current);
-        position = elapsed >= duration ? elapsed % duration : elapsed;
-      }
       navigator.mediaSession.setPositionState({
         duration,
-        playbackRate: 1.0,
+        playbackRate: trackId === 'off' ? 0.0 : 1.0,
         position: Math.min(position, Math.max(0, duration - 0.05))
       });
     } catch (e) {}
-  }, []);
+  }, [getCurrentPosition]);
 
   const syncMediaMetadata = useCallback((trackId, resetPosition = false) => {
-    const label = TRACK_LABELS[trackId] || 'Festive Pulse';
+    const fallbackTrack = spotlightTrackRef.current || 'ambient';
+    const displayTrack = trackId === 'off' ? (lastPlayTrackRef.current || fallbackTrack) : trackId;
+    const label = TRACK_LABELS[displayTrack] || 'Festive Pulse';
     if (typeof document !== 'undefined') {
       document.title = trackId === 'off' ? 'Festive Pulse — Holiday Dashboard' : `${label} — Festive Pulse`;
     }
@@ -887,12 +945,14 @@ function useFestiveAudioEngine(onNotify) {
           : [];
 
         if (typeof window !== 'undefined' && 'MediaMetadata' in window) {
-          navigator.mediaSession.metadata = new window.MediaMetadata({
-            title: label,
-            artist: 'Festive Pulse',
-            album: 'Holiday Chimes & Melodies',
-            artwork
-          });
+          if (!navigator.mediaSession.metadata || navigator.mediaSession.metadata.title !== label) {
+            navigator.mediaSession.metadata = new window.MediaMetadata({
+              title: label,
+              artist: 'Festive Pulse',
+              album: 'Holiday Chimes & Melodies',
+              artwork
+            });
+          }
         }
         navigator.mediaSession.playbackState = trackId === 'off' ? 'paused' : 'playing';
         updateMediaPositionState(trackId, resetPosition);
@@ -921,6 +981,7 @@ function useFestiveAudioEngine(onNotify) {
   }, [updateMediaPositionState]);
 
   const stopAudioLoop = useCallback(() => {
+    loopIdRef.current += 1;
     if (chimeTimerRef.current) {
       clearInterval(chimeTimerRef.current);
       chimeTimerRef.current = null;
@@ -941,6 +1002,7 @@ function useFestiveAudioEngine(onNotify) {
       } catch (e) {}
     });
     activeOscillatorsRef.current = [];
+    loopStartTimesRef.current = [];
 
     if (activeTrackRef.current === 'off') {
       bgAudioElRef.current?.pause();
@@ -960,6 +1022,16 @@ function useFestiveAudioEngine(onNotify) {
     if (isAutoSwitch && !hasUserInteractedRef.current) {
       return;
     }
+    if (isAutoSwitch && activeTrackRef.current === trackId) {
+      return;
+    }
+    if (trackId !== 'off') {
+      lastPlayTrackRef.current = trackId;
+    }
+    pausedElapsedRef.current = 0;
+    songStepRef.current = 0;
+    loopStartTimesRef.current = [];
+    setPlaybackTime(0);
     activeTrackRef.current = trackId;
     syncMediaMetadata(trackId, true);
     if (trackId === 'off') {
@@ -968,6 +1040,73 @@ function useFestiveAudioEngine(onNotify) {
     setActiveTrack(trackId);
     if (toastMsg && onNotify) onNotify(toastMsg);
   }, [onNotify, stopAudioLoop, syncMediaMetadata]);
+
+  const pauseTrack = useCallback((toastMsg = null) => {
+    hasUserInteractedRef.current = true;
+    if (activeTrackRef.current !== 'off') {
+      const pos = getCurrentPosition(activeTrackRef.current);
+      pausedElapsedRef.current = pos;
+      setPlaybackTime(pos);
+      lastPlayTrackRef.current = activeTrackRef.current;
+    }
+    activeTrackRef.current = 'off';
+    stopAudioLoop();
+    syncMediaMetadata('off', false);
+    setActiveTrack('off');
+    if (toastMsg && onNotify) onNotify(toastMsg);
+  }, [getCurrentPosition, onNotify, stopAudioLoop, syncMediaMetadata]);
+
+  const resumeTrack = useCallback((toastMsg = null) => {
+    hasUserInteractedRef.current = true;
+    const target = lastPlayTrackRef.current || spotlightTrackRef.current || 'ambient';
+    activeTrackRef.current = target;
+    syncMediaMetadata(target, false);
+    setActiveTrack(target);
+    if (toastMsg && onNotify) onNotify(toastMsg);
+  }, [onNotify, syncMediaMetadata]);
+
+  const seekTrackRef = useRef(null);
+  const startLookaheadAudioLoopRef = useRef(null);
+
+  const seekTrack = useCallback((targetSeconds) => {
+    hasUserInteractedRef.current = true;
+    const fallbackTrack = spotlightTrackRef.current || 'ambient';
+    const currentId = activeTrackRef.current === 'off'
+      ? (lastPlayTrackRef.current || fallbackTrack)
+      : activeTrackRef.current;
+    const dur = TRACK_DURATIONS[currentId] || 60;
+    const clamped = Math.min(Math.max(0, targetSeconds), dur);
+
+    pausedElapsedRef.current = clamped;
+    setPlaybackTime(clamped);
+
+    if (currentId === 'song' || currentId === 'halloween') {
+      const melody = currentId === 'song' ? MERRY_CHRISTMAS_MELODY : SPOOKY_SKELETONS_MELODY;
+      let acc = 0;
+      let targetIdx = 0;
+      for (let i = 0; i < melody.length; i++) {
+        if (acc + melody[i].duration > clamped) {
+          targetIdx = i;
+          break;
+        }
+        acc += melody[i].duration;
+      }
+      songStepRef.current = targetIdx;
+    }
+
+    if (audioCtxRef.current) {
+      loopAnchorCtxTimeRef.current = audioCtxRef.current.currentTime - clamped;
+      loopStartTimesRef.current = [];
+    }
+
+    updateMediaPositionState(activeTrackRef.current, false);
+
+    if (activeTrackRef.current !== 'off' && startLookaheadAudioLoopRef.current) {
+      startLookaheadAudioLoopRef.current(activeTrackRef.current, clamped);
+    }
+  }, [updateMediaPositionState]);
+
+  seekTrackRef.current = seekTrack;
 
   const initAudioCtx = useCallback(() => {
     if (!audioCtxRef.current) {
@@ -1036,7 +1175,8 @@ function useFestiveAudioEngine(onNotify) {
         syncMediaMetadata(activeTrackRef.current);
         navigator.mediaSession.setActionHandler('play', () => {
           if (activeTrackRef.current === 'off') {
-            selectTrack('ambient', 'Looping Ambient Chimes Active');
+            const target = lastPlayTrackRef.current || spotlightTrackRef.current || 'ambient';
+            resumeTrack(`${TRACK_LABELS[target]} Active`);
           } else {
             ctx?.resume().catch(() => {});
             carrierAudioElRef.current?.play().catch(() => {});
@@ -1044,13 +1184,11 @@ function useFestiveAudioEngine(onNotify) {
             syncMediaMetadata(activeTrackRef.current);
           }
         });
-        navigator.mediaSession.setActionHandler('pause', () => selectTrack('off', 'Chimes Muted'));
+        navigator.mediaSession.setActionHandler('pause', () => pauseTrack('Chimes Paused'));
         navigator.mediaSession.setActionHandler('stop', () => selectTrack('off', 'Chimes Muted'));
         navigator.mediaSession.setActionHandler('seekto', (details) => {
-          if (details && typeof details.seekTime === 'number' && audioCtxRef.current) {
-            loopAnchorCtxTimeRef.current = audioCtxRef.current.currentTime - details.seekTime;
-            loopStartTimesRef.current = [];
-            updateMediaPositionState(activeTrackRef.current, false);
+          if (details && typeof details.seekTime === 'number' && seekTrackRef.current) {
+            seekTrackRef.current(details.seekTime);
           }
         });
         navigator.mediaSession.setActionHandler('nexttrack', () => {
@@ -1069,7 +1207,7 @@ function useFestiveAudioEngine(onNotify) {
     }
 
     return ctx;
-  }, [selectTrack, syncMediaMetadata, updateMediaPositionState]);
+  }, [pauseTrack, resumeTrack, selectTrack, syncMediaMetadata]);
 
   const scheduleVoice = useCallback((freq, startTime, duration, vol, harmonicRatio = 2, harmonicGain = 0.22, useLowpass = false) => {
     const ctx = initAudioCtx();
@@ -1128,32 +1266,33 @@ function useFestiveAudioEngine(onNotify) {
     }
   }, [initAudioCtx]);
 
-  const startLookaheadAudioLoop = useCallback((trackType) => {
+  const startLookaheadAudioLoop = useCallback((trackType, customOffset = null) => {
     stopAudioLoop();
+    const currentLoopId = loopIdRef.current;
     const ctx = initAudioCtx();
     if (!ctx) return;
 
-    songStepRef.current = 0;
+    const resumeOffset = customOffset !== null ? customOffset : (pausedElapsedRef.current || 0);
+    if (resumeOffset === 0) {
+      songStepRef.current = 0;
+    }
     const startCtxTime = ctx.currentTime + 0.05;
     nextNoteTimeRef.current = startCtxTime;
-    loopAnchorCtxTimeRef.current = startCtxTime;
+    loopAnchorCtxTimeRef.current = startCtxTime - resumeOffset;
     loopStartTimesRef.current = [];
-    let isFirstLoopNote = true;
+    let isFirstLoopNote = resumeOffset === 0;
     const ambientNotes = [261.63, 329.63, 392.00, 523.25, 659.25, 783.99];
 
     const scheduler = () => {
-      if (activeTrackRef.current !== trackType) return;
+      if (activeTrackRef.current !== trackType || loopIdRef.current !== currentLoopId) return;
       const currentCtx = initAudioCtx();
       if (!currentCtx) return;
 
-      if (nextNoteTimeRef.current < currentCtx.currentTime) {
+      if (nextNoteTimeRef.current < currentCtx.currentTime - 0.1) {
         nextNoteTimeRef.current = currentCtx.currentTime + 0.05;
-        loopAnchorCtxTimeRef.current = nextNoteTimeRef.current;
-        loopStartTimesRef.current = [];
-        isFirstLoopNote = true;
       }
 
-      const scheduleAheadTime = 4.0;
+      const scheduleAheadTime = 2.0;
       while (nextNoteTimeRef.current < currentCtx.currentTime + scheduleAheadTime) {
         if (trackType === 'ambient') {
           const freq = ambientNotes[Math.floor(Math.random() * ambientNotes.length)];
@@ -1203,17 +1342,19 @@ function useFestiveAudioEngine(onNotify) {
     };
 
     scheduler();
-    chimeTimerRef.current = setInterval(scheduler, 500);
+    chimeTimerRef.current = setInterval(scheduler, 250);
   }, [initAudioCtx, scheduleVoice, stopAudioLoop, updateMediaPositionState]);
+
+  startLookaheadAudioLoopRef.current = startLookaheadAudioLoop;
 
   useEffect(() => {
     activeTrackRef.current = activeTrack;
     if (activeTrack !== 'off') {
       startLookaheadAudioLoop(activeTrack);
-      syncMediaMetadata(activeTrack, true);
+      syncMediaMetadata(activeTrack, pausedElapsedRef.current === 0);
     } else {
       stopAudioLoop();
-      syncMediaMetadata('off', true);
+      syncMediaMetadata('off', false);
     }
     return () => stopAudioLoop();
   }, [activeTrack, startLookaheadAudioLoop, stopAudioLoop, syncMediaMetadata]);
@@ -1223,7 +1364,7 @@ function useFestiveAudioEngine(onNotify) {
       if (e && e.type === 'pointerdown' && !hasUserInteractedRef.current) {
         hasUserInteractedRef.current = true;
         if (activeTrackRef.current === 'off') {
-          selectTrack('ambient', null, false);
+          selectTrack(spotlightTrackRef.current || 'ambient', null, false);
           return;
         }
       }
@@ -1244,6 +1385,8 @@ function useFestiveAudioEngine(onNotify) {
         if (ctx && loopStartTimesRef.current.length > 0 && ctx.currentTime >= loopStartTimesRef.current[0]) {
           loopAnchorCtxTimeRef.current = loopStartTimesRef.current.shift();
           updateMediaPositionState(activeTrackRef.current, true);
+        } else {
+          updateMediaPositionState(activeTrackRef.current, false);
         }
       }
     }, 100);
@@ -1262,9 +1405,28 @@ function useFestiveAudioEngine(onNotify) {
       window.removeEventListener('pagehide', keepAudioAlive);
       window.removeEventListener('pointerdown', keepAudioAlive);
     };
-  }, [initAudioCtx, startLookaheadAudioLoop, syncMediaMetadata, updateMediaPositionState]);
+  }, [initAudioCtx, selectTrack, startLookaheadAudioLoop, syncMediaMetadata, updateMediaPositionState]);
 
-  return { activeTrack, selectTrack };
+  const togglePlayPause = useCallback(() => {
+    if (activeTrackRef.current === 'off') {
+      const target = lastPlayTrackRef.current || spotlightTrackRef.current || 'ambient';
+      resumeTrack(`${TRACK_LABELS[target]} Active`);
+    } else {
+      pauseTrack('Chimes Paused');
+    }
+  }, [pauseTrack, resumeTrack]);
+
+  const cycleTrack = useCallback((direction = 1) => {
+    const currentId = activeTrackRef.current === 'off' ? (lastPlayTrackRef.current || spotlightTrackRef.current || 'ambient') : activeTrackRef.current;
+    const currentIdx = PLAYABLE_TRACKS.indexOf(currentId);
+    const nextIdx = currentIdx === -1
+      ? 0
+      : (currentIdx + direction + PLAYABLE_TRACKS.length) % PLAYABLE_TRACKS.length;
+    const nextTrack = PLAYABLE_TRACKS[nextIdx];
+    selectTrack(nextTrack, `${TRACK_LABELS[nextTrack]} Active`);
+  }, [selectTrack]);
+
+  return { activeTrack, playbackTime, selectTrack, togglePlayPause, cycleTrack, seekTrack };
 }
 
 /* ============================================================================
@@ -1576,9 +1738,14 @@ function MainApp() {
   });
   const [openChimeMenuLocation, setOpenChimeMenuLocation] = useState(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isKilled, setIsKilled] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
   const [now, setNow] = useState(() => new Date());
   const [isConfettiActive, setIsConfettiActive] = useState(false);
+
+  if (isKilled) {
+    throw new Error('Manual Kill Switch triggered');
+  }
 
   useEffect(() => {
     try {
@@ -1603,13 +1770,6 @@ function MainApp() {
     if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
     toastTimeoutRef.current = setTimeout(() => setToastMessage(''), 3000);
   }, []);
-
-  const { activeTrack, selectTrack } = useFestiveAudioEngine(triggerToast);
-
-  const handleSelectTrack = useCallback((trackId, msg) => {
-    selectTrack(trackId, msg);
-    setOpenChimeMenuLocation(null);
-  }, [selectTrack]);
 
   const toggleConfettiWaterfall = useCallback((customToastMsg = null) => {
     setIsConfettiActive((prev) => {
@@ -1686,6 +1846,11 @@ function MainApp() {
       })
       .sort((a, b) => {
         if (sortOrder === 'alphabetical') return a.title.localeCompare(b.title);
+        const todayA = computeCountdown(a, now, targetTimeMode).isToday;
+        const todayB = computeCountdown(b, now, targetTimeMode).isToday;
+        if (sortOrder === 'earliest' && todayA !== todayB) {
+          return todayA ? -1 : 1;
+        }
         const diffA = getNextTargetDate(a, now, targetTimeMode) - now;
         const diffB = getNextTargetDate(b, now, targetTimeMode) - now;
         return sortOrder === 'earliest' ? diffA - diffB : diffB - diffA;
@@ -1706,6 +1871,16 @@ function MainApp() {
     if (!fullscreenEventId) return null;
     return HOLIDAY_CATALOG.find((e) => e.id === fullscreenEventId) || null;
   }, [fullscreenEventId]);
+
+  const activeSpotlightTrack = (fullscreenEvent || heroEvent)?.defaultTrack || 'ambient';
+  const { activeTrack, playbackTime, selectTrack, togglePlayPause, cycleTrack, seekTrack } = useFestiveAudioEngine(triggerToast, activeSpotlightTrack);
+  const displayMediaTrack = activeTrack === 'off' ? activeSpotlightTrack : activeTrack;
+  const mediaDuration = TRACK_DURATIONS[displayMediaTrack] || 60;
+
+  const handleSelectTrack = useCallback((trackId, msg) => {
+    selectTrack(trackId, msg);
+    setOpenChimeMenuLocation(null);
+  }, [selectTrack]);
 
   const heroTime = useMemo(
     () => computeCountdown(heroEvent, now, targetTimeMode),
@@ -2334,6 +2509,121 @@ function MainApp() {
                         <IconParty className="w-3.5 h-3.5 text-white" />
                         <span>{isConfettiActive ? 'Stop' : 'Confetti 🎉'}</span>
                       </button>
+                    </div>
+                  </div>
+
+                  {/* Emergency Kill Switch */}
+                  <div className={`space-y-2 pt-3 border-t ${isDarkMode ? 'border-slate-800' : 'border-slate-200'}`}>
+                    <button
+                      type="button"
+                      onClick={() => setIsKilled(true)}
+                      className="w-full p-3 rounded-xl border border-rose-500/40 bg-rose-500/10 hover:bg-rose-500/20 text-left transition flex items-center justify-between group"
+                    >
+                      <div className="flex items-center space-x-3">
+                        <div className="w-8 h-8 rounded-lg bg-rose-500 text-white flex items-center justify-center shrink-0 shadow">
+                          <IconPower className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <div className="text-xs font-bold text-rose-400 group-hover:text-rose-300">
+                            Kill Switch
+                          </div>
+                          <div className="text-[10px] text-slate-400">
+                            Just in case of a performance drop
+                          </div>
+                        </div>
+                      </div>
+                      <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-rose-500/20 text-rose-400">
+                        Trigger
+                      </span>
+                    </button>
+                  </div>
+
+                  {/* Media Player */}
+                  <div className={`space-y-2.5 pt-3 border-t ${isDarkMode ? 'border-slate-800' : 'border-slate-200'}`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                        <IconMusic className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Media Player</span>
+                      </div>
+                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                        activeTrack !== 'off'
+                          ? 'bg-emerald-500/15 text-emerald-400'
+                          : isDarkMode ? 'bg-slate-800 text-slate-400' : 'bg-slate-100 text-slate-500'
+                      }`}>
+                        {activeTrack !== 'off' ? 'Playing' : 'Paused'}
+                      </span>
+                    </div>
+
+                    <div className={`p-3 rounded-xl border space-y-2.5 ${
+                      isDarkMode ? 'bg-slate-950/80 border-slate-800' : 'bg-slate-100/90 border-slate-200'
+                    }`}>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center space-x-2.5 min-w-0">
+                          <div className="w-9 h-9 rounded-2xl bg-gradient-to-tr from-amber-500 via-rose-500 to-emerald-500 flex items-center justify-center text-white shadow shrink-0">
+                            <IconSparkles className="w-4 h-4" />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-xs font-bold truncate">
+                              {TRACK_LABELS[displayMediaTrack]}
+                            </div>
+                            <div className="text-[10px] text-slate-400 truncate">
+                              Festive Pulse • Chime Synth
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center space-x-1 shrink-0">
+                          <button
+                            type="button"
+                            aria-label="Previous chime track"
+                            onClick={() => cycleTrack(-1)}
+                            className={`p-1.5 rounded-lg transition ${
+                              isDarkMode ? 'hover:bg-slate-800 text-slate-300' : 'hover:bg-slate-200 text-slate-700'
+                            }`}
+                          >
+                            <IconPrev className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={activeTrack !== 'off' ? 'Pause chimes' : 'Play chimes'}
+                            onClick={togglePlayPause}
+                            className="p-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 shadow transition"
+                          >
+                            {activeTrack !== 'off' ? (
+                              <IconPause className="w-4 h-4" />
+                            ) : (
+                              <IconPlay className="w-4 h-4" />
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            aria-label="Next chime track"
+                            onClick={() => cycleTrack(1)}
+                            className={`p-1.5 rounded-lg transition ${
+                              isDarkMode ? 'hover:bg-slate-800 text-slate-300' : 'hover:bg-slate-200 text-slate-700'
+                            }`}
+                          >
+                            <IconNext className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <input
+                          type="range"
+                          aria-label="Chime timeline scrubber"
+                          min={0}
+                          max={mediaDuration}
+                          step={0.05}
+                          value={Math.min(playbackTime, mediaDuration)}
+                          onChange={(e) => seekTrack(parseFloat(e.target.value))}
+                          className="w-full h-1.5 rounded-lg appearance-none cursor-pointer accent-amber-500 bg-slate-700/60"
+                        />
+                        <div className="flex items-center justify-between text-[10px] font-mono tabular-nums text-slate-400">
+                          <span>{formatTrackSeconds(playbackTime)}</span>
+                          <span>{formatTrackSeconds(mediaDuration)}</span>
+                        </div>
+                      </div>
                     </div>
                   </div>
 
